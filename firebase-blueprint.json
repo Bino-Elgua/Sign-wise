@@ -1,0 +1,40 @@
+{
+  "entities": {
+    "AuditEntry": {
+      "title": "AuditEntry",
+      "description": "An entry in the audit trail of a contract.",
+      "type": "object",
+      "properties": {
+        "event": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "details": { "type": "string" }
+      },
+      "required": ["event", "timestamp", "details"]
+    },
+    "ContractHistoryItem": {
+      "title": "ContractHistoryItem",
+      "description": "A historical record of a contract in the vault.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "date": { "type": "string" },
+        "type": { "type": "string" },
+        "status": { "type": "string", "enum": ["Signed", "Declined", "Draft", "Archived"] },
+        "summary": { "type": "string" },
+        "sealUrl": { "type": "string" },
+        "auditTrail": { 
+          "type": "array",
+          "items": { "$ref": "AuditEntry" }
+        }
+      },
+      "required": ["id", "name", "date", "type", "status", "summary", "auditTrail"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}/contracts/{contractId}": {
+      "schema": { "$ref": "ContractHistoryItem" },
+      "description": "Contracts stored for a specific user."
+    }
+  }
+}

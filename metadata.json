@@ -1,0 +1,8 @@
+{
+  "name": "Remix: Copy of SignWise AI",
+  "description": "A signer-first AI assistant that protects you by analyzing legal contracts for red flags, predatory language, and hidden terms before you sign.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}

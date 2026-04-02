@@ -1,0 +1,65 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users/{userId}/contracts
+    // Document ID: {contractId}
+    // Fields:
+    //   - id: string (required) - Unique ID
+    //   - name: string (required) - Name of the contract
+    //   - date: string (required) - Date of the contract
+    //   - type: string (required) - Type of the contract
+    //   - status: string (required, enum) - Status of the contract
+    //   - summary: string (required) - Summary of the contract
+    //   - sealUrl: string (optional) - URL of the forensic seal
+    //   - auditTrail: list (required) - List of audit entries
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    function isValidContract(data) {
+      return hasRequiredFields(['id', 'name', 'date', 'type', 'status', 'summary', 'auditTrail']) &&
+             hasOnlyAllowedFields(['id', 'name', 'date', 'type', 'status', 'summary', 'sealUrl', 'auditTrail', 'analysis']) &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 255 &&
+             data.status in ['Signed', 'Declined', 'Draft', 'Archived'] &&
+             data.auditTrail is list && data.auditTrail.size() < 100;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    match /users/{userId}/contracts/{contractId} {
+      allow read: if isOwner(userId);
+      allow create: if isOwner(userId) && isValidContract(request.resource.data);
+      allow update: if isOwner(userId) && isValidContract(request.resource.data);
+      allow delete: if isOwner(userId);
+    }
+  }
+}
