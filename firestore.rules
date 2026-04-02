@@ -81,5 +81,10 @@ service cloud.firestore {
                     && request.resource.data.status in ['pending', 'analyzing', 'complete', 'failed'];
       allow delete: if isOwner(userId);
     }
+
+    // Rate limit tracking — Cloud Functions write, client read only
+    match /users/{userId}/rateLimits/{limitId} {
+      allow read: if isOwner(userId);
+    }
   }
 }
