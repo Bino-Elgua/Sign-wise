@@ -94,3 +94,14 @@ export enum AppStep {
 }
 
 export type VerificationMethod = 'Biometric' | 'Behavioral' | 'Standard';
+
+export interface DocumentRecord {
+  docId: string;
+  filename: string;
+  fileType: string;
+  storagePath: string;
+  downloadURL: string;
+  uploadedAt: string;
+  status: 'pending' | 'analyzing' | 'complete' | 'failed';
+  analysisResult: ContractAnalysis | null;
+}

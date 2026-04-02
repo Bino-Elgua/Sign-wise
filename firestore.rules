@@ -61,5 +61,15 @@ service cloud.firestore {
       allow update: if isOwner(userId) && isValidContract(request.resource.data);
       allow delete: if isOwner(userId);
     }
+
+    match /users/{userId}/documents/{docId} {
+      allow read: if isOwner(userId);
+      allow create: if isOwner(userId)
+                    && hasRequiredFields(['docId', 'filename', 'fileType', 'storagePath', 'downloadURL', 'uploadedAt', 'status', 'analysisResult'])
+                    && request.resource.data.status in ['pending', 'analyzing', 'complete', 'failed'];
+      allow update: if isOwner(userId)
+                    && request.resource.data.status in ['pending', 'analyzing', 'complete', 'failed'];
+      allow delete: if isOwner(userId);
+    }
   }
 }

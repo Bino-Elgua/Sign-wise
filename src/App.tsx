@@ -3,13 +3,14 @@ import React from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import Layout from './components/Layout';
 import UploadArea from './components/UploadArea';
+import DocumentUpload from './components/DocumentUpload';
 import Dashboard from './components/Dashboard';
 import ContractCreator from './components/ContractCreator';
 import Settings from './components/Settings';
-import { Login } from './src/components/auth/Login';
-import { Register } from './src/components/auth/Register';
-import { ForgotPassword } from './src/components/auth/ForgotPassword';
-import { ProtectedRoute } from './src/components/auth/ProtectedRoute';
+import { Login } from './components/auth/Login';
+import { Register } from './components/auth/Register';
+import { ForgotPassword } from './components/auth/ForgotPassword';
+import { ProtectedRoute } from './components/auth/ProtectedRoute';
 import { useAuth } from './context/AuthContext';
 
 const App: React.FC = () => {
@@ -25,11 +26,34 @@ const App: React.FC = () => {
           path="/" 
           element={
             <ProtectedRoute>
-              <UploadArea onUpload={() => {}} />
+              <DocumentUpload />
             </ProtectedRoute>
           } 
         />
-        {/* Add other routes here */}
+        <Route
+          path="/upload"
+          element={
+            <ProtectedRoute>
+              <DocumentUpload />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/analyze/:docId"
+          element={
+            <ProtectedRoute>
+              <Dashboard analysis={null as any} sealUrl="" onRestart={() => {}} onDecline={() => {}} onConfirm={() => {}} auditTrail={[]} preferences={{} as any} />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/legacy"
+          element={
+            <ProtectedRoute>
+              <UploadArea onUpload={() => {}} />
+            </ProtectedRoute>
+          }
+        />
       </Routes>
     </Layout>
   );
