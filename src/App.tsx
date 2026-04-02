@@ -1,12 +1,9 @@
-
 import React from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import Layout from './components/Layout';
-import UploadArea from './components/UploadArea';
+import HomeDashboard from './components/HomeDashboard';
 import DocumentUpload from './components/DocumentUpload';
 import AnalysisPage from './components/AnalysisPage';
-import Dashboard from './components/Dashboard';
-import ContractCreator from './components/ContractCreator';
 import Settings from './components/Settings';
 import { Login } from './components/auth/Login';
 import { Register } from './components/auth/Register';
@@ -23,13 +20,13 @@ const App: React.FC = () => {
         <Route path="/login" element={user ? <Navigate to="/" /> : <Login />} />
         <Route path="/register" element={user ? <Navigate to="/" /> : <Register />} />
         <Route path="/forgot-password" element={<ForgotPassword />} />
-        <Route 
-          path="/" 
+        <Route
+          path="/"
           element={
             <ProtectedRoute>
-              <DocumentUpload />
+              <HomeDashboard />
             </ProtectedRoute>
-          } 
+          }
         />
         <Route
           path="/upload"
@@ -48,10 +45,10 @@ const App: React.FC = () => {
           }
         />
         <Route
-          path="/legacy"
+          path="/settings"
           element={
             <ProtectedRoute>
-              <UploadArea onUpload={() => {}} />
+              <Settings preferences={{} as any} onUpdate={() => {}} onBack={() => {}} />
             </ProtectedRoute>
           }
         />
