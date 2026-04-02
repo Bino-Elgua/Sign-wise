@@ -2,14 +2,17 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { QueryDocumentSnapshot, DocumentData } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
+import { useAnalysisLimit } from '../hooks/useAnalysisLimit';
 import { subscribeToDocuments, deleteDocument, reAnalyzeDocument } from '../services/documentService';
 import { DocumentRecord, RiskRating } from '../types/types';
 import DocumentCard from './DocumentCard';
 import ConfirmModal from './ConfirmModal';
+import UpgradePrompt from './UpgradePrompt';
 
 const HomeDashboard: React.FC = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const { used, limit, isAtLimit } = useAnalysisLimit();
   const [documents, setDocuments] = useState<DocumentRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -144,11 +147,19 @@ const HomeDashboard: React.FC = () => {
         </div>
         <button
           onClick={() => navigate('/upload')}
-          className="bg-indigo-600 text-white px-8 py-4 rounded-2xl font-black text-[10px] uppercase tracking-[0.3em] hover:bg-indigo-700 transition active:scale-95 shadow-lg shadow-indigo-200 flex items-center gap-2"
+          disabled={isAtLimit}
+          className="bg-indigo-600 text-white px-8 py-4 rounded-2xl font-black text-[10px] uppercase tracking-[0.3em] hover:bg-indigo-700 transition active:scale-95 shadow-lg shadow-indigo-200 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           <i className="fa-solid fa-plus"></i> Upload Contract
         </button>
       </div>
+
+      {/* Limit reached banner */}
+      {isAtLimit && (
+        <div className="mb-8">
+          <UpgradePrompt used={used} limit={limit} />
+        </div>
+      )}
 
       {/* Stats Bar */}
       {completed.length > 0 && (

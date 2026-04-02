@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   updateProfile,
   updatePassword,
@@ -11,6 +11,9 @@ import { doc, getDoc, updateDoc, serverTimestamp, collection, getCountFromServer
 import { httpsCallable } from 'firebase/functions';
 import { db, functions } from '../services/firebase';
 import { useAuth } from '../context/AuthContext';
+import { usePlan } from '../hooks/usePlan';
+import { useAnalysisLimit } from '../hooks/useAnalysisLimit';
+import UpgradePrompt from './UpgradePrompt';
 
 // ── helpers ──
 function isPasswordUser(user: any): boolean {
@@ -26,6 +29,10 @@ function formatDate(ts: any): string {
 const SettingsPage: React.FC = () => {
   const { user, signOut } = useAuth();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const justUpgraded = searchParams.get('upgraded') === 'true';
+  const { plan, isPro, subscriptionId, planExpiresAt } = usePlan();
+  const { used, limit } = useAnalysisLimit();
 
   // Profile
   const [displayName, setDisplayName] = useState(user?.displayName || '');
@@ -224,6 +231,62 @@ const SettingsPage: React.FC = () => {
         )}
       </section>
 
+      {/* ═══ SUBSCRIPTION ═══ */}
+      {justUpgraded && (
+        <div className="bg-emerald-50 border border-emerald-200 p-4 rounded-2xl flex items-center gap-3 text-emerald-700 text-xs font-bold animate-in fade-in slide-in-from-top-2">
+          <i className="fa-solid fa-check-circle text-emerald-500"></i>
+          Welcome to SignWise Pro! Unlimited analyses are now unlocked.
+        </div>
+      )}
+
+      <section className="bg-white rounded-[2rem] border border-slate-100 shadow-sm p-8 md:p-10">
+        <h3 className="text-xs font-black uppercase tracking-[0.2em] text-slate-900 flex items-center gap-3 mb-6">
+          <i className="fa-solid fa-credit-card text-indigo-600"></i> Subscription
+        </h3>
+
+        {isPro ? (
+          <div className="space-y-4">
+            <div className="flex items-center gap-3">
+              <span className="px-4 py-2 bg-indigo-600 text-white text-[10px] font-black uppercase tracking-widest rounded-xl flex items-center gap-2">
+                <i className="fa-solid fa-crown text-amber-300"></i> Pro
+              </span>
+              <span className="text-sm font-bold text-slate-500">$9/month</span>
+            </div>
+            {planExpiresAt && (
+              <p className="text-xs text-slate-400 font-bold">
+                Renews: {formatDate(planExpiresAt)}
+              </p>
+            )}
+            {subscriptionId && (
+              <a
+                href={`https://billing.stripe.com/p/login/test`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-2 bg-slate-100 px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest text-slate-600 hover:bg-slate-200 transition"
+              >
+                <i className="fa-solid fa-external-link text-[9px]"></i> Manage Subscription
+              </a>
+            )}
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <div className="flex items-center gap-3 mb-2">
+              <span className="px-4 py-2 bg-slate-100 text-slate-600 text-[10px] font-black uppercase tracking-widest rounded-xl">
+                Free Plan
+              </span>
+              <span className="text-xs font-bold text-slate-400">{used} / {limit} analyses this month</span>
+            </div>
+            <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden max-w-md">
+              <div
+                className={`h-2 rounded-full transition-all ${used >= limit ? 'bg-red-500' : 'bg-indigo-600'}`}
+                style={{ width: `${Math.min(100, Math.round((used / limit) * 100))}%` }}
+              ></div>
+            </div>
+            <UpgradePrompt used={used} limit={limit} />
+          </div>
+        )}
+      </section>
+
       {/* ═══ ACCOUNT INFO ═══ */}
       <section className="bg-white rounded-[2rem] border border-slate-100 shadow-sm p-8 md:p-10">
         <h3 className="text-xs font-black uppercase tracking-[0.2em] text-slate-900 flex items-center gap-3 mb-6">
@@ -232,7 +295,9 @@ const SettingsPage: React.FC = () => {
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <div className="bg-slate-50 p-5 rounded-[1.5rem] border border-slate-100">
             <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-1">Plan</p>
-            <p className="text-lg font-black text-indigo-600">Free</p>
+            <p className={`text-lg font-black ${isPro ? 'text-indigo-600' : 'text-slate-600'}`}>
+              {isPro ? 'Pro' : 'Free'}
+            </p>
           </div>
           <div className="bg-slate-50 p-5 rounded-[1.5rem] border border-slate-100">
             <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-1">Member Since</p>

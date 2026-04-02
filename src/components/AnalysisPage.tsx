@@ -5,6 +5,9 @@ import { httpsCallable } from 'firebase/functions';
 import { db, functions } from '../services/firebase';
 import { useAuth } from '../context/AuthContext';
 import { DocumentRecord, AnalysisResult, FlaggedClause, RiskRating } from '../types/types';
+import { useAnalysisLimit } from '../hooks/useAnalysisLimit';
+import { usePlan } from '../hooks/usePlan';
+import UpgradePrompt from './UpgradePrompt';
 
 const riskColor: Record<RiskRating, { bg: string; text: string; border: string; icon: string }> = {
   LOW: { bg: 'bg-emerald-50', text: 'text-emerald-700', border: 'border-emerald-200', icon: 'fa-shield-halved' },
@@ -57,6 +60,8 @@ const AnalysisPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [triggering, setTriggering] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { isPro } = usePlan();
+  const { used, limit, isAtLimit } = useAnalysisLimit();
 
   // Real-time listener on the document
   useEffect(() => {
@@ -82,11 +87,12 @@ const AnalysisPage: React.FC = () => {
     return unsubscribe;
   }, [user, docId]);
 
-  // Auto-trigger analysis for pending documents
+  // Auto-trigger analysis for pending documents (respects plan limit)
   useEffect(() => {
     if (!document || document.status !== 'pending' || triggering) return;
+    if (!isPro && isAtLimit) return;
     triggerAnalysis();
-  }, [document?.status]);
+  }, [document?.status, isAtLimit, isPro]);
 
   const triggerAnalysis = async () => {
     if (!docId || triggering) return;
@@ -177,6 +183,19 @@ const AnalysisPage: React.FC = () => {
   }
 
   if (!document) return null;
+
+  // ── Pending but at limit — show upgrade prompt ──
+  if (document.status === 'pending' && !isPro && isAtLimit) {
+    return (
+      <div className="max-w-3xl mx-auto px-4 py-12 md:py-20 space-y-8">
+        <div className="text-center mb-4">
+          <h2 className="text-3xl md:text-5xl font-black text-slate-900 tracking-tighter mb-2">Analysis Limit Reached</h2>
+          <p className="text-sm text-slate-500 font-medium">Upgrade to Pro for unlimited contract analyses.</p>
+        </div>
+        <UpgradePrompt used={used} limit={limit} />
+      </div>
+    );
+  }
 
   // ── Analyzing state ──
   if (document.status === 'pending' || document.status === 'analyzing') {
@@ -287,7 +306,7 @@ const AnalysisPage: React.FC = () => {
           onClick={() => downloadReport(result)}
           className="bg-indigo-600 text-white px-10 py-5 rounded-[2rem] font-black text-xs uppercase tracking-[0.3em] shadow-[0_20px_40px_rgba(79,70,229,0.25)] hover:bg-indigo-700 transition active:scale-95 flex items-center gap-3"
         >
-          <i className="fa-solid fa-download"></i> Download Report
+          <i className="fa-solid fa-download"></i> Download Report {isPro ? '(PDF)' : '(.txt)'}
         </button>
         <button
           onClick={() => navigate('/upload')}

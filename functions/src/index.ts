@@ -1,14 +1,126 @@
-import { onCall, HttpsError } from 'firebase-functions/v2/https';
+import { onCall, onRequest, HttpsError } from 'firebase-functions/v2/https';
 import { initializeApp } from 'firebase-admin/app';
 import { getStorage } from 'firebase-admin/storage';
-import { getFirestore, FieldPath } from 'firebase-admin/firestore';
+import { getFirestore } from 'firebase-admin/firestore';
 import { GoogleGenAI } from '@google/genai';
 import pdfParse from 'pdf-parse';
 import mammoth from 'mammoth';
+import Stripe from 'stripe';
 
 initializeApp();
 
 const db = getFirestore();
+
+function getStripe(): Stripe {
+  const key = process.env.STRIPE_SECRET_KEY;
+  if (!key) throw new Error('STRIPE_SECRET_KEY not configured.');
+  return new Stripe(key);
+}
+
+const FREE_LIMIT = 3;
+
+async function getMonthlyAnalysisCount(uid: string): Promise<number> {
+  const now = new Date();
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  const snap = await db
+    .collection(`users/${uid}/documents`)
+    .where('uploadedAt', '>=', monthStart)
+    .where('status', 'in', ['pending', 'analyzing', 'complete'])
+    .count()
+    .get();
+  return snap.data().count;
+}
+
+// ─────────────────────────────────────────────────────────────
+// createCheckoutSession — Stripe Checkout for Pro plan
+// ─────────────────────────────────────────────────────────────
+export const createCheckoutSession = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'Authentication required.');
+  }
+
+  const uid = request.auth.uid;
+  const userSnap = await db.doc(`users/${uid}`).get();
+  const email = userSnap.data()?.email || request.auth.token.email;
+
+  const stripe = getStripe();
+  const priceId = process.env.STRIPE_PRO_PRICE_ID;
+  if (!priceId) throw new HttpsError('internal', 'STRIPE_PRO_PRICE_ID not configured.');
+
+  const session = await stripe.checkout.sessions.create({
+    mode: 'subscription',
+    payment_method_types: ['card'],
+    customer_email: email,
+    line_items: [{ price: priceId, quantity: 1 }],
+    success_url: `${process.env.APP_URL || 'https://signwise.app'}/settings?upgraded=true`,
+    cancel_url: `${process.env.APP_URL || 'https://signwise.app'}/settings`,
+    metadata: { firebaseUID: uid },
+  });
+
+  return { url: session.url };
+});
+
+// ─────────────────────────────────────────────────────────────
+// stripeWebhook — handles Stripe events
+// ─────────────────────────────────────────────────────────────
+export const stripeWebhook = onRequest(async (req, res) => {
+  if (req.method !== 'POST') {
+    res.status(405).send('Method not allowed');
+    return;
+  }
+
+  const stripe = getStripe();
+  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+  if (!webhookSecret) {
+    res.status(500).send('Webhook secret not configured.');
+    return;
+  }
+
+  const sig = req.headers['stripe-signature'] as string;
+  let event: Stripe.Event;
+
+  try {
+    event = stripe.webhooks.constructEvent(req.rawBody, sig, webhookSecret);
+  } catch (err: any) {
+    res.status(400).send(`Webhook signature verification failed: ${err.message}`);
+    return;
+  }
+
+  if (event.type === 'checkout.session.completed') {
+    const session = event.data.object as Stripe.Checkout.Session;
+    const uid = session.metadata?.firebaseUID;
+    if (uid) {
+      await db.doc(`users/${uid}`).update({
+        plan: 'pro',
+        stripeCustomerId: session.customer,
+        subscriptionId: session.subscription,
+        planExpiresAt: null,
+      });
+    }
+  }
+
+  if (event.type === 'customer.subscription.deleted') {
+    const subscription = event.data.object as Stripe.Subscription;
+    const customerId = subscription.customer as string;
+
+    // Find user by stripeCustomerId
+    const usersSnap = await db
+      .collection('users')
+      .where('stripeCustomerId', '==', customerId)
+      .limit(1)
+      .get();
+
+    if (!usersSnap.empty) {
+      await usersSnap.docs[0].ref.update({
+        plan: 'free',
+        subscriptionId: null,
+        planExpiresAt: null,
+      });
+    }
+  }
+
+  res.status(200).json({ received: true });
+});
 
 // ─────────────────────────────────────────────────────────────
 // deleteUserAccount — wipes all user data (Firestore + Storage)
@@ -148,6 +260,20 @@ export const analyzeDocument = onCall(
 
     if (!docId) {
       throw new HttpsError('invalid-argument', 'docId is required.');
+    }
+
+    // ── Server-side plan limit enforcement ──
+    const userSnap = await db.doc(`users/${uid}`).get();
+    const userPlan = userSnap.data()?.plan || 'free';
+
+    if (userPlan === 'free') {
+      const monthCount = await getMonthlyAnalysisCount(uid);
+      if (monthCount >= FREE_LIMIT) {
+        throw new HttpsError(
+          'resource-exhausted',
+          `Free plan limit reached (${FREE_LIMIT}/month). Upgrade to Pro for unlimited analyses.`
+        );
+      }
     }
 
     const docRef = db.doc(`users/${uid}/documents/${docId}`);

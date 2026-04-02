@@ -52,7 +52,15 @@ service cloud.firestore {
     // ===============================================================
 
     match /users/{userId} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
+      allow read: if request.auth != null && request.auth.uid == userId;
+      // Allow create (registration) — plan defaults to "free"
+      allow create: if request.auth != null && request.auth.uid == userId
+                    && request.resource.data.plan == 'free';
+      // Allow update — but plan, stripeCustomerId, subscriptionId, planExpiresAt
+      // are protected: client cannot change them (Cloud Functions service account bypasses rules)
+      allow update: if request.auth != null && request.auth.uid == userId
+                    && (!request.resource.data.diff(resource.data).affectedKeys()
+                        .hasAny(['plan', 'stripeCustomerId', 'subscriptionId', 'planExpiresAt']));
     }
 
     match /users/{userId}/contracts/{contractId} {
