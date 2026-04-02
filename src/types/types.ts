@@ -95,6 +95,8 @@ export enum AppStep {
 
 export type VerificationMethod = 'Biometric' | 'Behavioral' | 'Standard';
 
+export type AnalysisEngine = 'gemini' | 'ollama';
+
 export interface DocumentRecord {
   docId: string;
   filename: string;
@@ -105,6 +107,8 @@ export interface DocumentRecord {
   status: 'pending' | 'analyzing' | 'complete' | 'failed';
   analysisResult: AnalysisResult | null;
   error?: string;
+  engine?: AnalysisEngine;
+  model?: string;
 }
 
 export type RiskRating = 'LOW' | 'MEDIUM' | 'HIGH';
@@ -121,4 +125,15 @@ export interface AnalysisResult {
   redFlags: FlaggedClause[];
   hiddenTerms: FlaggedClause[];
   disclaimer: string;
+  engine?: AnalysisEngine;
+  model?: string;
 }
+
+export const OLLAMA_MODELS = [
+  'qwen3-coder:480b-cloud',
+  'glm-4.7:cloud',
+  'qwen2.5-coder:7b',
+  'nemotron-3-super:cloud',
+] as const;
+
+export type OllamaModel = typeof OLLAMA_MODELS[number];

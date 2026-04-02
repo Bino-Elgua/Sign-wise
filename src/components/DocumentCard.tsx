@@ -65,6 +65,12 @@ const DocumentCard: React.FC<DocumentCardProps> = ({ doc: record, onDelete, onRe
 
         {/* Badges */}
         <div className="flex items-center gap-2 shrink-0" onClick={(e) => e.stopPropagation()}>
+          {/* Engine badge */}
+          {record.status === 'complete' && (
+            <span className={`${record.engine === 'ollama' ? 'bg-cyan-50 text-cyan-600' : 'bg-indigo-50 text-indigo-600'} px-3 py-1.5 rounded-xl text-[8px] font-black uppercase tracking-widest`}>
+              {record.engine === 'ollama' && record.model ? record.model : 'Gemini'}
+            </span>
+          )}
           {risk && (
             <span className={`${risk.bg} ${risk.text} px-3 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-widest`}>
               {record.analysisResult!.riskRating}

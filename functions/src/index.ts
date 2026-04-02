@@ -314,6 +314,170 @@ function isImageType(contentType: string): boolean {
   return contentType === 'image/jpeg' || contentType === 'image/png';
 }
 
+// ─────────────────────────────────────────────────────────────
+// analyzeWithOllama — Ollama-backed analysis engine
+// ─────────────────────────────────────────────────────────────
+
+const APPROVED_OLLAMA_MODELS = [
+  'qwen3-coder:480b-cloud',
+  'glm-4.7:cloud',
+  'qwen2.5-coder:7b',
+  'nemotron-3-super:cloud',
+];
+
+export const analyzeWithOllama = onCall(
+  { timeoutSeconds: 60, memory: '512MiB' },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError('unauthenticated', 'Authentication required.');
+    }
+
+    const uid = request.auth.uid;
+    const { docId, model } = request.data as { docId: string; model: string };
+
+    if (!docId) {
+      throw new HttpsError('invalid-argument', 'docId is required.');
+    }
+
+    // ── Validate model ──
+    if (!model || !APPROVED_OLLAMA_MODELS.includes(model)) {
+      logger.warn('Invalid Ollama model requested', { uid, model });
+      throw new HttpsError(
+        'invalid-argument',
+        `Invalid model: "${model}". Approved: ${APPROVED_OLLAMA_MODELS.join(', ')}`
+      );
+    }
+
+    // ── Shared rate limiting ──
+    await checkRateLimit(uid);
+
+    // ── Shared plan limit enforcement ──
+    const userSnap = await db.doc(`users/${uid}`).get();
+    const userPlan = userSnap.data()?.plan || 'free';
+
+    if (userPlan === 'free') {
+      const monthCount = await getMonthlyAnalysisCount(uid);
+      if (monthCount >= FREE_LIMIT) {
+        logger.warn('Free plan limit reached', { uid, monthCount });
+        throw new HttpsError(
+          'resource-exhausted',
+          `Free plan limit reached (${FREE_LIMIT}/month). Upgrade to Pro for unlimited analyses.`
+        );
+      }
+    }
+
+    const docRef = db.doc(`users/${uid}/documents/${docId}`);
+    const docSnap = await docRef.get();
+
+    if (!docSnap.exists) {
+      throw new HttpsError('not-found', 'Document not found.');
+    }
+
+    const docData = docSnap.data()!;
+    const { storagePath, fileType } = docData as { storagePath: string; fileType: string };
+
+    await docRef.update({ status: 'analyzing' });
+    logger.info('Ollama analysis started', { uid, docId, model, fileType });
+
+    try {
+      // Download file
+      const bucket = getStorage().bucket();
+      const file = bucket.file(storagePath);
+      const [fileBuffer] = await file.download();
+
+      // Extract text (images sent as description request — Ollama text-only)
+      let userContent: string;
+      if (isImageType(fileType)) {
+        userContent = SYSTEM_PROMPT + '\n\nAnalyze this contract document image. The image has been provided as a scanned contract — extract and analyze all visible text for legal risks.';
+      } else {
+        const extractedText = await extractText(fileBuffer, fileType);
+        if (!extractedText.trim()) {
+          throw new Error('No text could be extracted from the document.');
+        }
+        userContent = `${SYSTEM_PROMPT}\n\n--- CONTRACT TEXT ---\n${extractedText}\n--- END ---`;
+      }
+
+      // Call Ollama REST API
+      const ollamaHost = process.env.OLLAMA_HOST || 'http://localhost:11434';
+      let ollamaResponse: Response;
+
+      try {
+        ollamaResponse = await fetch(`${ollamaHost}/api/chat`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model,
+            stream: false,
+            messages: [
+              { role: 'system', content: SYSTEM_PROMPT },
+              { role: 'user', content: userContent },
+            ],
+          }),
+        });
+      } catch (fetchError: any) {
+        logger.error('Ollama host unreachable', { ollamaHost, error: fetchError.message });
+        await docRef.update({ status: 'failed', error: 'Ollama host unreachable.' });
+        throw new HttpsError('unavailable', 'Ollama host unreachable. Check that OLLAMA_HOST is running.');
+      }
+
+      if (!ollamaResponse.ok) {
+        const errBody = await ollamaResponse.text();
+        logger.error('Ollama API error', { status: ollamaResponse.status, body: errBody });
+        await docRef.update({ status: 'failed', error: `Ollama error: ${ollamaResponse.status}` });
+        throw new HttpsError('internal', `Ollama returned ${ollamaResponse.status}`);
+      }
+
+      const ollamaData = await ollamaResponse.json() as { message?: { content?: string } };
+      const responseText = ollamaData?.message?.content ?? '';
+
+      if (!responseText.trim()) {
+        throw new Error('Ollama returned empty response.');
+      }
+
+      // Parse JSON
+      const jsonStr = responseText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+      let analysisResult: any;
+      try {
+        analysisResult = JSON.parse(jsonStr);
+      } catch {
+        logger.error('Ollama response malformed', { uid, docId, model, responseText: responseText.substring(0, 500) });
+        await docRef.update({ status: 'failed', error: 'Model response malformed — could not parse JSON.' });
+        throw new HttpsError('internal', 'Model response malformed. Try a different model or switch to Gemini.');
+      }
+
+      if (!analysisResult.summary || !analysisResult.riskRating || !analysisResult.disclaimer) {
+        throw new Error('Model returned incomplete analysis structure.');
+      }
+
+      // Stamp engine metadata
+      analysisResult.engine = 'ollama';
+      analysisResult.model = model;
+
+      await docRef.update({
+        status: 'complete',
+        analysisResult,
+        engine: 'ollama',
+        model,
+      });
+
+      logger.info('Ollama analysis complete', { uid, docId, model, riskRating: analysisResult.riskRating });
+      return { status: 'complete', analysisResult };
+    } catch (error: any) {
+      if (error instanceof HttpsError) throw error;
+
+      const errorMessage = error?.message || 'Unknown Ollama analysis error.';
+      logger.error('analyzeWithOllama failed', { uid, docId, model, error: errorMessage });
+
+      await docRef.update({ status: 'failed', error: errorMessage });
+      throw new HttpsError('internal', `Analysis failed: ${errorMessage}`);
+    }
+  }
+);
+
+// ─────────────────────────────────────────────────────────────
+// analyzeDocument — Gemini-backed analysis engine
+// ─────────────────────────────────────────────────────────────
+
 export const analyzeDocument = onCall(
   { timeoutSeconds: 60, memory: '512MiB' },
   async (request) => {
@@ -414,8 +578,11 @@ export const analyzeDocument = onCall(
         throw new Error('Gemini returned incomplete analysis structure.');
       }
 
-      await docRef.update({ status: 'complete', analysisResult });
-      logger.info('Analysis complete', { uid, docId, riskRating: analysisResult.riskRating });
+      analysisResult.engine = 'gemini';
+      analysisResult.model = 'gemini-2.5-flash';
+
+      await docRef.update({ status: 'complete', analysisResult, engine: 'gemini', model: 'gemini-2.5-flash' });
+      logger.info('Analysis complete', { uid, docId, engine: 'gemini', riskRating: analysisResult.riskRating });
 
       return { status: 'complete', analysisResult };
     } catch (error: any) {

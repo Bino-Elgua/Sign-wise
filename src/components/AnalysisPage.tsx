@@ -4,10 +4,11 @@ import { doc, onSnapshot } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { db, functions } from '../services/firebase';
 import { useAuth } from '../context/AuthContext';
-import { DocumentRecord, AnalysisResult, FlaggedClause, RiskRating } from '../types/types';
+import { DocumentRecord, AnalysisResult, AnalysisEngine, FlaggedClause, RiskRating, OllamaModel, OLLAMA_MODELS } from '../types/types';
 import { useAnalysisLimit } from '../hooks/useAnalysisLimit';
 import { usePlan } from '../hooks/usePlan';
 import UpgradePrompt from './UpgradePrompt';
+import EngineSelector from './EngineSelector';
 
 const riskColor: Record<RiskRating, { bg: string; text: string; border: string; icon: string }> = {
   LOW: { bg: 'bg-emerald-50', text: 'text-emerald-700', border: 'border-emerald-200', icon: 'fa-shield-halved' },
@@ -52,6 +53,13 @@ const ClauseList: React.FC<{ title: string; icon: string; items: FlaggedClause[]
   );
 };
 
+function engineLabel(record: DocumentRecord): string {
+  if (record.engine === 'ollama' && record.model) {
+    return `${record.model} via Ollama`;
+  }
+  return 'Gemini 2.5 Flash';
+}
+
 const AnalysisPage: React.FC = () => {
   const { docId } = useParams<{ docId: string }>();
   const { user } = useAuth();
@@ -62,6 +70,11 @@ const AnalysisPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const { isPro } = usePlan();
   const { used, limit, isAtLimit } = useAnalysisLimit();
+
+  // Engine selection state
+  const [selectedEngine, setSelectedEngine] = useState<AnalysisEngine>('gemini');
+  const [selectedModel, setSelectedModel] = useState<OllamaModel>(OLLAMA_MODELS[0]);
+  const [autoTriggered, setAutoTriggered] = useState(false);
 
   // Real-time listener on the document
   useEffect(() => {
@@ -87,25 +100,37 @@ const AnalysisPage: React.FC = () => {
     return unsubscribe;
   }, [user, docId]);
 
-  // Auto-trigger analysis for pending documents (respects plan limit)
-  useEffect(() => {
-    if (!document || document.status !== 'pending' || triggering) return;
-    if (!isPro && isAtLimit) return;
-    triggerAnalysis();
-  }, [document?.status, isAtLimit, isPro]);
-
-  const triggerAnalysis = async () => {
+  const triggerAnalysis = async (engine?: AnalysisEngine, model?: OllamaModel) => {
     if (!docId || triggering) return;
+    const eng = engine ?? selectedEngine;
+    const mdl = model ?? selectedModel;
+
     setTriggering(true);
     setError(null);
     try {
-      const analyze = httpsCallable(functions, 'analyzeDocument');
-      await analyze({ docId });
+      if (eng === 'ollama') {
+        const analyze = httpsCallable(functions, 'analyzeWithOllama');
+        await analyze({ docId, model: mdl });
+      } else {
+        const analyze = httpsCallable(functions, 'analyzeDocument');
+        await analyze({ docId });
+      }
     } catch (err: any) {
-      setError(err?.message || 'Analysis failed.');
+      const msg = err?.message || 'Analysis failed.';
+      setError(msg);
+      // If Ollama unreachable, don't auto-retry
+      if (msg.includes('unreachable') || msg.includes('UNAVAILABLE')) {
+        setAutoTriggered(false);
+      }
     } finally {
       setTriggering(false);
     }
+  };
+
+  const handleSwitchToGemini = () => {
+    setSelectedEngine('gemini');
+    setError(null);
+    triggerAnalysis('gemini');
   };
 
   const downloadReport = (result: AnalysisResult) => {
@@ -116,6 +141,7 @@ const AnalysisPage: React.FC = () => {
       '',
       `Risk Rating: ${result.riskRating}`,
       `Reason: ${result.riskReason}`,
+      `Engine: ${result.engine === 'ollama' && result.model ? `${result.model} via Ollama` : 'Gemini 2.5 Flash'}`,
       '',
       '── SUMMARY ──',
       result.summary,
@@ -197,21 +223,63 @@ const AnalysisPage: React.FC = () => {
     );
   }
 
+  // ── Pending — show engine selector + analyze button ──
+  if (document.status === 'pending' && !triggering) {
+    return (
+      <div className="max-w-3xl mx-auto px-4 py-12 md:py-20 space-y-8">
+        <div className="text-center mb-4">
+          <h1 className="text-4xl md:text-6xl font-black text-slate-900 tracking-tighter mb-2">
+            Choose <span className="text-indigo-600">Engine.</span>
+          </h1>
+          <p className="text-sm text-slate-400 font-bold uppercase tracking-widest">{document.filename}</p>
+        </div>
+
+        <EngineSelector
+          engine={selectedEngine}
+          model={selectedModel}
+          onChange={(e, m) => { setSelectedEngine(e); setSelectedModel(m); }}
+        />
+
+        {error && (
+          <div className="bg-red-50 border border-red-200 p-4 rounded-2xl text-red-700 text-xs font-bold flex items-center gap-3">
+            <i className="fa-solid fa-triangle-exclamation text-red-500"></i>
+            <span className="flex-1">{error}</span>
+            {selectedEngine === 'ollama' && (
+              <button onClick={handleSwitchToGemini} className="bg-white px-4 py-2 rounded-xl text-indigo-600 font-black text-[9px] uppercase tracking-widest border border-indigo-200 hover:bg-indigo-50 transition shrink-0">
+                Switch to Gemini
+              </button>
+            )}
+          </div>
+        )}
+
+        <div className="text-center">
+          <button
+            onClick={() => triggerAnalysis()}
+            className="bg-indigo-600 text-white px-12 py-5 rounded-[2rem] font-black text-xs uppercase tracking-[0.3em] shadow-[0_20px_40px_rgba(79,70,229,0.25)] hover:bg-indigo-700 transition active:scale-95"
+          >
+            Analyze with {selectedEngine === 'ollama' ? selectedModel : 'Gemini 2.5 Flash'}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   // ── Analyzing state ──
   if (document.status === 'pending' || document.status === 'analyzing') {
+    const engineName = selectedEngine === 'ollama' ? `${selectedModel} via Ollama` : 'Gemini Forensic Engine';
     return (
       <div className="flex flex-col items-center justify-center min-h-[60vh] px-4">
         <div className="relative w-48 h-48 md:w-72 md:h-72">
-          <div className="absolute inset-0 border-x-[12px] border-indigo-600 rounded-full animate-spin"></div>
+          <div className={`absolute inset-0 border-x-[12px] rounded-full animate-spin ${selectedEngine === 'ollama' ? 'border-cyan-600' : 'border-indigo-600'}`}></div>
           <div className="absolute inset-8 bg-white rounded-full shadow-2xl flex items-center justify-center">
-            <i className="fa-solid fa-user-shield text-4xl md:text-7xl text-indigo-600 animate-pulse"></i>
+            <i className={`fa-solid ${selectedEngine === 'ollama' ? 'fa-server' : 'fa-user-shield'} text-4xl md:text-7xl ${selectedEngine === 'ollama' ? 'text-cyan-600' : 'text-indigo-600'} animate-pulse`}></i>
           </div>
         </div>
         <h2 className="text-xl md:text-4xl font-black mt-16 text-slate-900 tracking-[0.15em] uppercase text-center">
           Sentinel Analyzing...
         </h2>
         <p className="text-slate-400 font-bold mt-4 uppercase text-[9px] tracking-[0.3em]">
-          {document.filename} • Gemini Forensic Engine Active
+          {document.filename} • {engineName} Active
         </p>
       </div>
     );
@@ -219,6 +287,7 @@ const AnalysisPage: React.FC = () => {
 
   // ── Failed state ──
   if (document.status === 'failed') {
+    const isOllamaError = document.error?.includes('unreachable') || document.error?.includes('UNAVAILABLE');
     return (
       <div className="max-w-3xl mx-auto px-4 py-20 text-center">
         <div className="w-20 h-20 bg-red-50 rounded-[2rem] mx-auto flex items-center justify-center mb-8">
@@ -229,12 +298,20 @@ const AnalysisPage: React.FC = () => {
         {error && <p className="text-xs text-red-500 font-bold mb-6">{error}</p>}
         <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
           <button
-            onClick={triggerAnalysis}
+            onClick={() => triggerAnalysis()}
             disabled={triggering}
             className="bg-indigo-600 text-white px-10 py-4 rounded-2xl font-black text-xs uppercase tracking-[0.3em] hover:bg-indigo-700 transition disabled:opacity-50"
           >
             {triggering ? <><i className="fa-solid fa-spinner animate-spin mr-2"></i>Retrying...</> : 'Retry Analysis'}
           </button>
+          {isOllamaError && (
+            <button
+              onClick={handleSwitchToGemini}
+              className="bg-cyan-50 text-cyan-700 px-8 py-4 rounded-2xl font-black text-xs uppercase tracking-[0.2em] border border-cyan-200 hover:bg-cyan-100 transition"
+            >
+              Switch to Gemini
+            </button>
+          )}
           <button onClick={() => navigate('/upload')} className="text-slate-400 hover:text-slate-600 font-black text-xs uppercase tracking-widest transition">
             Upload New
           </button>
@@ -246,6 +323,7 @@ const AnalysisPage: React.FC = () => {
   // ── Complete state — render results ──
   const result = document.analysisResult!;
   const risk = riskColor[result.riskRating];
+  const analyzedBy = engineLabel(document);
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-12 md:py-20 space-y-8">
@@ -257,7 +335,10 @@ const AnalysisPage: React.FC = () => {
         <h1 className="text-4xl md:text-7xl font-black text-slate-900 tracking-tighter mb-2">
           Analysis <span className="text-indigo-600">Complete.</span>
         </h1>
-        <p className="text-sm text-slate-400 font-bold uppercase tracking-widest">{document.filename}</p>
+        <p className="text-sm text-slate-400 font-bold uppercase tracking-widest mb-1">{document.filename}</p>
+        <p className="text-[10px] font-black uppercase tracking-widest text-slate-300">
+          Analyzed by: {analyzedBy}
+        </p>
       </div>
 
       {/* Risk Badge */}
@@ -291,7 +372,7 @@ const AnalysisPage: React.FC = () => {
       {/* Hidden Terms */}
       <ClauseList title="Hidden Terms" icon="fa-eye-slash" items={result.hiddenTerms} color="text-amber-500" />
 
-      {/* Disclaimer — always visible, cannot be dismissed */}
+      {/* Disclaimer */}
       <div className="bg-slate-900 text-white rounded-[2rem] p-8 md:p-12">
         <h3 className="text-xs font-black uppercase tracking-[0.2em] text-slate-400 mb-4 flex items-center gap-3">
           <i className="fa-solid fa-scale-balanced"></i>
