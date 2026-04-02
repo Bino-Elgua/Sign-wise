@@ -4,7 +4,7 @@ import Layout from './components/Layout';
 import HomeDashboard from './components/HomeDashboard';
 import DocumentUpload from './components/DocumentUpload';
 import AnalysisPage from './components/AnalysisPage';
-import Settings from './components/Settings';
+import SettingsPage from './components/SettingsPage';
 import { Login } from './components/auth/Login';
 import { Register } from './components/auth/Register';
 import { ForgotPassword } from './components/auth/ForgotPassword';
@@ -48,7 +48,7 @@ const App: React.FC = () => {
           path="/settings"
           element={
             <ProtectedRoute>
-              <Settings preferences={{} as any} onUpdate={() => {}} onBack={() => {}} />
+              <SettingsPage />
             </ProtectedRoute>
           }
         />

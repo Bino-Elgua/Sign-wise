@@ -1,7 +1,7 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { initializeApp } from 'firebase-admin/app';
 import { getStorage } from 'firebase-admin/storage';
-import { getFirestore } from 'firebase-admin/firestore';
+import { getFirestore, FieldPath } from 'firebase-admin/firestore';
 import { GoogleGenAI } from '@google/genai';
 import pdfParse from 'pdf-parse';
 import mammoth from 'mammoth';
@@ -9,6 +9,40 @@ import mammoth from 'mammoth';
 initializeApp();
 
 const db = getFirestore();
+
+// ─────────────────────────────────────────────────────────────
+// deleteUserAccount — wipes all user data (Firestore + Storage)
+// ─────────────────────────────────────────────────────────────
+export const deleteUserAccount = onCall(
+  { timeoutSeconds: 120 },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError('unauthenticated', 'Authentication required.');
+    }
+
+    const uid = request.auth.uid;
+
+    // 1. Delete all Firestore documents in users/{uid}/documents
+    const docsRef = db.collection(`users/${uid}/documents`);
+    const docsSnap = await docsRef.listDocuments();
+
+    const batch = db.batch();
+    for (const docRef of docsSnap) {
+      batch.delete(docRef);
+    }
+    // Delete the user root document
+    batch.delete(db.doc(`users/${uid}`));
+    await batch.commit();
+
+    // 2. Delete all Storage files under users/{uid}/
+    const bucket = getStorage().bucket();
+    const [files] = await bucket.getFiles({ prefix: `users/${uid}/` });
+    await Promise.all(files.map((file) => file.delete().catch(() => {})));
+
+    // Auth user deletion is handled client-side (deleteUser)
+    return { success: true };
+  }
+);
 
 // ─────────────────────────────────────────────────────────────
 // getUploadToken — returns a signed URL for client-side upload
