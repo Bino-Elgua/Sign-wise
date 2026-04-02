@@ -4,6 +4,7 @@ import { Routes, Route, Navigate } from 'react-router-dom';
 import Layout from './components/Layout';
 import UploadArea from './components/UploadArea';
 import DocumentUpload from './components/DocumentUpload';
+import AnalysisPage from './components/AnalysisPage';
 import Dashboard from './components/Dashboard';
 import ContractCreator from './components/ContractCreator';
 import Settings from './components/Settings';
@@ -42,7 +43,7 @@ const App: React.FC = () => {
           path="/analyze/:docId"
           element={
             <ProtectedRoute>
-              <Dashboard analysis={null as any} sealUrl="" onRestart={() => {}} onDecline={() => {}} onConfirm={() => {}} auditTrail={[]} preferences={{} as any} />
+              <AnalysisPage />
             </ProtectedRoute>
           }
         />

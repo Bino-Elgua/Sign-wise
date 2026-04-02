@@ -103,5 +103,22 @@ export interface DocumentRecord {
   downloadURL: string;
   uploadedAt: string;
   status: 'pending' | 'analyzing' | 'complete' | 'failed';
-  analysisResult: ContractAnalysis | null;
+  analysisResult: AnalysisResult | null;
+  error?: string;
+}
+
+export type RiskRating = 'LOW' | 'MEDIUM' | 'HIGH';
+
+export interface FlaggedClause {
+  clause: string;
+  explanation: string;
+}
+
+export interface AnalysisResult {
+  summary: string;
+  riskRating: RiskRating;
+  riskReason: string;
+  redFlags: FlaggedClause[];
+  hiddenTerms: FlaggedClause[];
+  disclaimer: string;
 }

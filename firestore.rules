@@ -67,6 +67,8 @@ service cloud.firestore {
       allow create: if isOwner(userId)
                     && hasRequiredFields(['docId', 'filename', 'fileType', 'storagePath', 'downloadURL', 'uploadedAt', 'status', 'analysisResult'])
                     && request.resource.data.status in ['pending', 'analyzing', 'complete', 'failed'];
+      // Client can only set status to pending; Cloud Functions service account
+      // bypasses rules and handles analyzing/complete/failed transitions.
       allow update: if isOwner(userId)
                     && request.resource.data.status in ['pending', 'analyzing', 'complete', 'failed'];
       allow delete: if isOwner(userId);
